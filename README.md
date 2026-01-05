@@ -5,7 +5,7 @@ A powerful template engine with Python expression evaluation.
 ## Installation
 
 ```bash
-pip install xyloxml
+pip install xylo.py
 ```
 
 ## Usage

@@ -3,7 +3,7 @@ requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "xyloxml"
+name = "xylo.py"
 version = "0.1.1"
 description = "A powerful template engine with Python expression evaluation"
 readme = "README.md"
