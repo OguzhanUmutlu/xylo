@@ -704,7 +704,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
 
             for_statement = text[i + for_match.end():paren_end].strip()
 
-            in_match = re.match(r"(.+?)\s+in\s+(.+)", for_statement)
+            in_match = re.match(r"(.+?)\s+in\s+(.+)", for_statement, re.DOTALL)
             if not in_match:
                 raise ValueError(f"Invalid ${KEYWORD_FOR} syntax: expected 'var in iterable', got '{for_statement}'")
 

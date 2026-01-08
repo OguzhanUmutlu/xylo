@@ -121,7 +121,6 @@ class TestComplexCases:
         assert result == expected
 
 
-class ContextTest:
-    def test_context(self):
-        context = {"value": 10, "double": lambda x: x * 2}
-        assert xylo("Value: $(value), Double: $(double(value))", context) == "Value: 10, Double: 20"
+class TestLine:
+    def test_line(self):
+        assert xylo("$for(x in [\n1])$end") == ""
