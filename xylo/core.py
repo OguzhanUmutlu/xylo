@@ -38,6 +38,13 @@ END_BLOCKS = [
 ]
 
 
+def _xylo_eval(path, code, context, expr=True):
+    try:
+        return (eval if expr else exec)(code, xml_globals, {**context, "__file__": path} if path else context)
+    except Exception as e:
+        raise ValueError(f"Error evaluating expression '{code}': {e}")
+
+
 def _find_matching_paren(text, start):
     depth = 0
     i = start
@@ -217,7 +224,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
             code = text[i + raise_match.end():paren_end].strip()
 
             try:
-                value = eval(code, xml_globals, context)
+                value = _xylo_eval(path, code, context)
                 if isinstance(value, str):
                     raise UserRaisedException(value)
                 elif isinstance(value, Exception):
@@ -265,14 +272,14 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 message_expr = None
 
             try:
-                condition_result = eval(condition_expr, xml_globals, context)
+                condition_result = _xylo_eval(path, condition_expr, context)
             except Exception as e:
                 raise ValueError(f"Error evaluating ${KEYWORD_ASSERT} condition '{condition_expr}': {e}")
 
             if not condition_result:
                 if message_expr:
                     try:
-                        message = eval(message_expr, xml_globals, context)
+                        message = _xylo_eval(path, message_expr, context)
                     except Exception as e:
                         raise ValueError(f"Error evaluating ${KEYWORD_ASSERT} message '{message_expr}': {e}")
                     raise AssertionError(str(message))
@@ -451,7 +458,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
             call_context = context.copy()
             for param, arg_expr in zip(func_params, arg_exprs):
                 try:
-                    arg_value = eval(arg_expr, xml_globals, context)
+                    arg_value = _xylo_eval(path, arg_expr, context)
                     call_context[param] = arg_value
                 except Exception as e:
                     raise ValueError(f"Error evaluating ${KEYWORD_CALL} argument '{arg_expr}': {e}")
@@ -477,7 +484,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 raise ValueError(f"Unmatched ${KEYWORD_SWITCH} statement")
 
             try:
-                switch_value = eval(switch_expr, xml_globals, context)
+                switch_value = _xylo_eval(path, switch_expr, context)
             except Exception as e:
                 raise ValueError(f"Error evaluating ${KEYWORD_SWITCH} expression '{switch_expr}': {e}")
 
@@ -497,7 +504,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                     case_expr = text[branch_pos + case_match.end():case_paren_end].strip()
 
                     try:
-                        case_value = eval(case_expr, xml_globals, context)
+                        case_value = _xylo_eval(path, case_expr, context)
                     except Exception as e:
                         raise ValueError(f"Error evaluating ${KEYWORD_CASE} expression '{case_expr}': {e}")
 
@@ -553,7 +560,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
             body = text[paren_end + 1:end_pos]
 
             try:
-                cm = eval(cm_expr, xml_globals, context)
+                cm = _xylo_eval(path, cm_expr, context)
             except Exception as e:
                 raise ValueError(f"Error evaluating ${KEYWORD_WITH} expression '{cm_expr}': {e}")
 
@@ -599,7 +606,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
             branch_positions = [paren_end + 1] + [pos for _, pos in branches] + [end_pos]
 
             try:
-                condition_met = eval(condition_expr, xml_globals, context)
+                condition_met = _xylo_eval(path, condition_expr, context)
             except Exception as e:
                 raise ValueError(f"Error evaluating ${KEYWORD_IF} condition '{condition_expr}': {e}")
 
@@ -624,7 +631,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                         elif_condition = text[branch_pos + elif_match.end():elif_paren_end].strip()
 
                         try:
-                            elif_result = eval(elif_condition, xml_globals, context)
+                            elif_result = _xylo_eval(path, elif_condition, context)
                         except Exception as e:
                             raise ValueError(f"Error evaluating ${KEYWORD_ELIF} condition '{elif_condition}': {e}")
 
@@ -673,7 +680,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                     raise ValueError(f"${KEYWORD_WHILE} loop exceeded maximum iterations ({max_iterations})")
 
                 try:
-                    condition_met = eval(condition_expr, xml_globals, context)
+                    condition_met = _xylo_eval(path, condition_expr, context)
                 except Exception as e:
                     raise ValueError(f"Error evaluating ${KEYWORD_WHILE} condition '{condition_expr}': {e}")
 
@@ -713,15 +720,16 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
             body = text[paren_end + 1:end_pos]
 
             try:
-                iterable = eval(iterable_expr, xml_globals, context)
+                iterable = _xylo_eval(path, iterable_expr, context)
             except Exception as e:
                 raise ValueError(f"Error evaluating ${KEYWORD_FOR} iterable '{iterable_expr}': {e}")
 
             for value in iterable:
                 loop_context = context.copy()
+                loop_context["__value__"] = value
 
                 try:
-                    exec(f"{var_part} = value", {"value": value}, loop_context)
+                    _xylo_eval(path, f"{var_part} = __value__", loop_context, expr=False)
                 except Exception as e:
                     raise ValueError(f"Error unpacking ${KEYWORD_FOR} variable '{var_part}': {e}")
 
@@ -755,9 +763,8 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 return include_path, kwargs
 
             try:
-                include_path, include_kwargs = eval(
-                    f"_include_helper({include_args})",
-                    xml_globals, {**context, "_include_helper": _include_helper}
+                include_path, include_kwargs = _xylo_eval(
+                    path, f"_include_helper({include_args})", {**context, "_include_helper": _include_helper}
                 )
             except Exception as e:
                 raise ValueError(f"Error parsing ${keyword_name} arguments '{include_args}': {e}")
@@ -798,9 +805,9 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
             is_exec = exec_match.group(1) is not None
             try:
                 if is_exec:
-                    exec(code, xml_globals, context)
+                    _xylo_eval(path, code, context, expr=False)
                 else:
-                    value = eval(code, xml_globals, context)
+                    value = _xylo_eval(path, code, context)
                     result.append(str(value))
             except Exception as e:
                 raise ValueError(f"Error evaluating {'code' if is_exec else 'expression'} '{code}': {e}")
