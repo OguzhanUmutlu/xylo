@@ -86,7 +86,9 @@ END_BLOCKS = [
 
 def _xylo_eval(path, code, context, expr=True, text=None, pos=None):
     try:
-        return (eval if expr else exec)(code, xml_globals, {**context, "__file__": path} if path else context)
+        if path:
+            context["__file__"] = path
+        return (eval if expr else exec)(code, xml_globals, context)
     except Exception as e:
         if text is not None and pos is not None:
             raise XyloError(f"Error evaluating expression '{code}': {e}", text, pos, path) from e
@@ -250,7 +252,6 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS, _
     i = 0
     control_flow = {"break": False, "continue": False, "return": False}
 
-    # For error reporting, use the original text if provided
     error_text = _original_text if _original_text is not None else text
 
     while i < len(text):

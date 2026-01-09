@@ -391,7 +391,7 @@ Parent line 3""")
 
         error_str = str(exc_info.value)
         assert "child.xylo" in error_str
-        assert ":3" in error_str  # line number in path:line format
+        assert ":3" in error_str
         assert "this_var_does_not_exist" in error_str
 
     def test_deeply_nested_include_error(self, tmp_path):
@@ -474,7 +474,6 @@ $end"""
             xylo(template)
 
         error = exc_info.value
-        # $(hi) is on line 6, not line 2 (relative to loop body)
         assert error.line_number == 6
         assert "$(hi)" in error.line_content
 
@@ -508,4 +507,24 @@ $end"""
         error = exc_info.value
         assert error.line_number == 5
         assert "$(bad_var)" in error.line_content
+
+    def test_for_loop_tuple_unpacking_with_path(self):
+        """Test that for loop tuple unpacking works when path is provided.
+
+        This is a regression test for a bug where variables set via exec()
+        were not synced back to the context when a path was provided.
+        """
+        template = """line1
+$for(index, item in enumerate(['a', 'b']))
+index=$(index), item=$(item)
+$end"""
+        # Without path - should work
+        result = xylo(template)
+        assert "index=0" in result
+        assert "index=1" in result
+
+        # With path - this was the bug
+        result = xylo(template, path="/some/template.xylo")
+        assert "index=0" in result
+        assert "index=1" in result
 
