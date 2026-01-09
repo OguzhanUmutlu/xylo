@@ -460,3 +460,52 @@ $(undefined_here)""", path="/some/template.xylo")
             tb = traceback.format_exc()
             assert "/some/template.xylo" in tb
             assert "undefined_here" in tb
+
+    def test_for_loop_error_line_number(self):
+        """Test that errors inside for loop bodies show correct line numbers."""
+        template = """a
+b
+c
+d
+$for(x in range(10))
+$(hi)
+$end"""
+        with pytest.raises(XyloError) as exc_info:
+            xylo(template)
+
+        error = exc_info.value
+        # $(hi) is on line 6, not line 2 (relative to loop body)
+        assert error.line_number == 6
+        assert "$(hi)" in error.line_content
+
+    def test_while_loop_error_line_number(self):
+        """Test that errors inside while loop bodies show correct line numbers."""
+        template = """line1
+line2
+line3
+$while(True)
+$(undefined_var)
+$break
+$end"""
+        with pytest.raises(XyloError) as exc_info:
+            xylo(template)
+
+        error = exc_info.value
+        assert error.line_number == 5
+        assert "$(undefined_var)" in error.line_content
+
+    def test_if_body_error_line_number(self):
+        """Test that errors inside if bodies show correct line numbers."""
+        template = """line1
+line2
+$if(True)
+line4
+$(bad_var)
+$end"""
+        with pytest.raises(XyloError) as exc_info:
+            xylo(template)
+
+        error = exc_info.value
+        assert error.line_number == 5
+        assert "$(bad_var)" in error.line_content
+
