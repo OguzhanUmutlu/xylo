@@ -40,7 +40,7 @@ class XyloError(ValueError):
     def __str__(self):
         if self.line_number is not None and self.line_content is not None:
             file_path = self.path if self.path else "<template>"
-            location = f'\n  File "{file_path}:{self.line_number}", line {self.line_number}\n    {self.line_content}\n'
+            location = f'\n  File "{file_path}:{self.line_number}"\n    {self.line_content}\n'
             return location + self.original_message
         return self.original_message
 

@@ -10,7 +10,7 @@ Example usage:
 from .core import xylo as _xylo_internal
 from .core import UserRaisedException, XyloError, DEFAULT_MAX_ITERATIONS
 
-__version__ = "0.1.6"
+__version__ = "0.1.7"
 __all__ = ["xylo", "xylo_set_path", "xylo_get_path", "UserRaisedException", "XyloError", "DEFAULT_MAX_ITERATIONS"]
 
 _global_path = None
