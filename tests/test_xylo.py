@@ -344,7 +344,7 @@ Line 4"""
             xylo(template)
 
         error_str = str(exc_info.value)
-        assert "line 3" in error_str.lower()
+        assert ":3" in error_str
         assert "$if(undefined_var)" in error_str
 
     def test_error_shows_template_path(self):
@@ -354,7 +354,7 @@ Line 4"""
 
         error_str = str(exc_info.value)
         assert "/my/template.xylo" in error_str
-        assert "line 1" in error_str.lower()
+        assert ":1" in error_str
 
     def test_error_shows_template_placeholder_when_no_path(self):
         """Test that errors show <template> when no path is provided."""
@@ -391,7 +391,7 @@ Parent line 3""")
 
         error_str = str(exc_info.value)
         assert "child.xylo" in error_str
-        assert "line 3" in error_str.lower()
+        assert ":3" in error_str  # line number in path:line format
         assert "this_var_does_not_exist" in error_str
 
     def test_deeply_nested_include_error(self, tmp_path):
