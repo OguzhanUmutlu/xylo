@@ -1,4 +1,5 @@
 import re
+import os
 
 DEFAULT_MAX_ITERATIONS = 1000
 
@@ -22,7 +23,19 @@ KEYWORD_FUNCTION = "function"
 KEYWORD_CALL = "call"
 KEYWORD_WITH = "with"
 KEYWORD_EXEC = "exec"
+KEYWORD_INCLUDE = "include"
+KEYWORD_IMPORT = "import"
 xml_globals = globals()
+
+END_BLOCKS = [
+    KEYWORD_FOR,
+    KEYWORD_WHILE,
+    KEYWORD_IF,
+    KEYWORD_TRY,
+    KEYWORD_SWITCH,
+    KEYWORD_FUNCTION,
+    KEYWORD_WITH
+]
 
 
 def _find_matching_paren(text, start):
@@ -64,13 +77,7 @@ def _find_matching_end(text, start):
     i = start
 
     while i < len(text):
-        if (re.match(r"\$" + KEYWORD_FOR + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_WHILE + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_IF + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_TRY + r"\s", text[i:]) or
-                re.match(r"\$" + KEYWORD_SWITCH + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_FUNCTION + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_WITH + r"\s*\(", text[i:])):
+        if any(re.match(r"\$" + kw + r"\s*\(", text[i:]) for kw in END_BLOCKS):
             depth += 1
         elif text[i:i + len("$" + KEYWORD_END)] == "$" + KEYWORD_END:
             depth -= 1
@@ -86,13 +93,7 @@ def _find_catch_block(text, start, end_pos):
     depth = 0
 
     while i < end_pos:
-        if (re.match(r"\$" + KEYWORD_FOR + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_WHILE + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_IF + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_TRY + r"\s", text[i:]) or
-                re.match(r"\$" + KEYWORD_SWITCH + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_FUNCTION + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_WITH + r"\s*\(", text[i:])):
+        if any(re.match(r"\$" + kw + r"\s*\(", text[i:]) for kw in END_BLOCKS):
             depth += 1
             i += 1
             continue
@@ -107,7 +108,6 @@ def _find_catch_block(text, start, end_pos):
                 return i
 
         i += 1
-
     return -1
 
 
@@ -144,13 +144,7 @@ def _find_switch_branches(text, start, end_pos):
     depth = 0
 
     while i < end_pos:
-        if (re.match(r"\$" + KEYWORD_FOR + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_WHILE + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_IF + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_TRY + r"\s", text[i:]) or
-                re.match(r"\$" + KEYWORD_SWITCH + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_FUNCTION + r"\s*\(", text[i:]) or
-                re.match(r"\$" + KEYWORD_WITH + r"\s*\(", text[i:])):
+        if any(re.match(r"\$" + kw + r"\s*\(", text[i:]) for kw in END_BLOCKS):
             depth += 1
             i += 1
             continue
@@ -177,13 +171,14 @@ class UserRaisedException(Exception):
         super().__init__(message)
 
 
-def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
+def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
     """
     Process a xylo template string and return the rendered result.
 
     Args:
         text: The template string to process.
         context: Optional dictionary of variables available in the template.
+        path: Optional file path for resolving $include directives. Required when using $include.
         max_iterations: Maximum iterations for while loops (default: 1000).
 
     Returns:
@@ -298,7 +293,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
             if catch_pos is None:
                 try_body = text[i + try_match.end():end_pos]
                 try:
-                    body_result, body_control = xylo(try_body, context, max_iterations)
+                    body_result, body_control = xylo(try_body, context, path, max_iterations)
                     result.append(body_result)
                     if body_control["break"] or body_control["continue"] or body_control["return"]:
                         return "".join(result), body_control
@@ -316,14 +311,14 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 catch_body = text[catch_paren_end + 1:end_pos]
 
                 try:
-                    body_result, body_control = xylo(try_body, context, max_iterations)
+                    body_result, body_control = xylo(try_body, context, path, max_iterations)
                     result.append(body_result)
                     if body_control["break"] or body_control["continue"] or body_control["return"]:
                         return "".join(result), body_control
                 except Exception as e:
                     catch_context = context.copy()
                     catch_context[var_name] = e
-                    body_result, body_control = xylo(catch_body, catch_context, max_iterations)
+                    body_result, body_control = xylo(catch_body, catch_context, path, max_iterations)
                     result.append(body_result)
                     if body_control["break"] or body_control["continue"] or body_control["return"]:
                         return "".join(result), body_control
@@ -461,7 +456,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 except Exception as e:
                     raise ValueError(f"Error evaluating ${KEYWORD_CALL} argument '{arg_expr}': {e}")
 
-            body_result, body_control = xylo(func_body, call_context, max_iterations)
+            body_result, body_control = xylo(func_body, call_context, path, max_iterations)
             result.append(body_result)
             if body_control["break"] or body_control["continue"] or body_control["return"]:
                 return "".join(result), body_control
@@ -512,7 +507,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                         body_end = branch_positions[next_branch_idx] if next_branch_idx < len(
                             branch_positions) else end_pos
                         body = text[body_start:body_end]
-                        body_result, body_control = xylo(body, context, max_iterations)
+                        body_result, body_control = xylo(body, context, path, max_iterations)
                         result.append(body_result)
                         if body_control["break"] or body_control["continue"] or body_control["return"]:
                             return "".join(result), body_control
@@ -527,7 +522,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 next_branch_idx = default_branch_idx + 2
                 body_end = branch_positions[next_branch_idx] if next_branch_idx < len(branch_positions) else end_pos
                 body = text[body_start:body_end]
-                body_result, body_control = xylo(body, context, max_iterations)
+                body_result, body_control = xylo(body, context, path, max_iterations)
                 result.append(body_result)
                 if body_control["break"] or body_control["continue"] or body_control["return"]:
                     return "".join(result), body_control
@@ -572,7 +567,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
 
             exc_info = (None, None, None)
             try:
-                body_result, body_control = xylo(body, with_context, max_iterations)
+                body_result, body_control = xylo(body, with_context, path, max_iterations)
                 result.append(body_result)
             except Exception as e:
                 import sys
@@ -614,7 +609,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 body_start = paren_end + 1
                 body_end = branch_positions[1] if len(branch_positions) > 2 else end_pos
                 body = text[body_start:body_end]
-                body_result, body_control = xylo(body, context, max_iterations)
+                body_result, body_control = xylo(body, context, path, max_iterations)
                 result.append(body_result)
                 if body_control["break"] or body_control["continue"] or body_control["return"]:
                     return "".join(result), body_control
@@ -639,7 +634,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                             body_end = branch_positions[next_branch_idx] if next_branch_idx < len(
                                 branch_positions) else end_pos
                             body = text[body_start:body_end]
-                            body_result, body_control = xylo(body, context, max_iterations)
+                            body_result, body_control = xylo(body, context, path, max_iterations)
                             result.append(body_result)
                             if body_control["break"] or body_control["continue"] or body_control["return"]:
                                 return "".join(result), body_control
@@ -649,7 +644,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                         body_start = branch_pos + len("$" + KEYWORD_ELSE)
                         body_end = end_pos
                         body = text[body_start:body_end]
-                        body_result, body_control = xylo(body, context, max_iterations)
+                        body_result, body_control = xylo(body, context, path, max_iterations)
                         result.append(body_result)
                         if body_control["break"] or body_control["continue"] or body_control["return"]:
                             return "".join(result), body_control
@@ -685,7 +680,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 if not condition_met:
                     break
 
-                body_result, body_control = xylo(body, context, max_iterations)
+                body_result, body_control = xylo(body, context, path, max_iterations)
                 result.append(body_result)
 
                 if body_control["break"]:
@@ -730,7 +725,7 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 except Exception as e:
                     raise ValueError(f"Error unpacking ${KEYWORD_FOR} variable '{var_part}': {e}")
 
-                body_result, body_control = xylo(body, loop_context, max_iterations)
+                body_result, body_control = xylo(body, loop_context, path, max_iterations)
                 result.append(body_result)
 
                 if body_control["break"]:
@@ -741,6 +736,58 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
 
         if text[i:i + len("$" + KEYWORD_END)] == "$" + KEYWORD_END:
             raise ValueError(f"Unmatched ${KEYWORD_END} statement")
+
+        include_match = re.match(r"\$(" + KEYWORD_INCLUDE + r"|" + KEYWORD_IMPORT + r")\s*\(", text[i:])
+        if include_match:
+            is_import = include_match.group(1) == KEYWORD_IMPORT
+            keyword_name = KEYWORD_IMPORT if is_import else KEYWORD_INCLUDE
+
+            paren_end = _find_matching_paren(text, i + include_match.end())
+            if paren_end == -1:
+                raise ValueError(f"Unmatched ${keyword_name} statement parenthesis")
+
+            if path is None:
+                raise ValueError(f"${keyword_name} requires path parameter to be set in xylo() call")
+
+            include_args = text[i + include_match.end():paren_end]
+
+            def _include_helper(include_path, **kwargs):
+                return include_path, kwargs
+
+            try:
+                include_path, include_kwargs = eval(
+                    f"_include_helper({include_args})",
+                    xml_globals, {**context, "_include_helper": _include_helper}
+                )
+            except Exception as e:
+                raise ValueError(f"Error parsing ${keyword_name} arguments '{include_args}': {e}")
+
+            base_dir = os.path.dirname(os.path.abspath(path))
+            resolved_path = os.path.join(base_dir, include_path)
+
+            if not os.path.exists(resolved_path):
+                raise ValueError(f"${keyword_name} file not found: {resolved_path}")
+
+            try:
+                with open(resolved_path, "r", encoding="utf-8") as f:
+                    include_content = f.read()
+            except Exception as e:
+                raise ValueError(f"Error reading ${keyword_name} file '{resolved_path}': {e}")
+
+            if is_import:
+                include_context = dict(include_kwargs)
+            else:
+                include_context = context.copy()
+                include_context.update(include_kwargs)
+
+            include_result, include_control = xylo(include_content, include_context, resolved_path, max_iterations)
+            result.append(include_result)
+
+            if include_control["break"] or include_control["continue"] or include_control["return"]:
+                return "".join(result), include_control
+
+            i = paren_end + 1
+            continue
 
         exec_match = re.match(r"\$(" + KEYWORD_EXEC + r")?\s*\(", text[i:])
         if exec_match:
@@ -764,4 +811,3 @@ def xylo(text, context=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         i += 1
 
     return "".join(result), control_flow
-

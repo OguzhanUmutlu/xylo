@@ -36,6 +36,8 @@ xylo('$function(greet, name) Hello, $(name)! $end $call(greet, "World")')  # "  
 - **Conditionals**: `$if(cond) ... $elif(cond) ... $else ... $end`
 - **Loops**: `$for(var in iterable) ... $end`, `$while(cond) ... $end`
 - **Functions**: `$function(name, args) ... $end` and `$call(name, args)`
+- **Include**: `$include("file.sdf", key=value, ...)` - Include and render another template
+- **Import**: `$import("file.sdf", key=value, ...)` - Import and render another template without the current context
 - **Switch**: `$switch(expr) $case(val) ... $default ... $end`
 - **Error handling**: `$try ... $catch(e) ... $end`, `$raise(msg)`, `$assert(cond)`
 - **Context managers**: `$with(expr as var) ... $end`

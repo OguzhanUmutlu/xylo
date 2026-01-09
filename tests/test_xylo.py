@@ -1,6 +1,6 @@
 """Tests for the xylo template engine."""
 import pytest
-from xylo import xylo, UserRaisedException
+from xylo import xylo, xylo_set_path, xylo_get_path, UserRaisedException
 
 
 class TestBasicExpressions:
@@ -124,3 +124,207 @@ class TestComplexCases:
 class TestLine:
     def test_line(self):
         assert xylo("$for(x in [\n1])$end") == ""
+
+
+class TestInclude:
+    def test_include_basic(self, tmp_path):
+        """Test basic file inclusion."""
+        include_file = tmp_path / "included.sdf"
+        include_file.write_text("Hello from included!")
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$include("included.sdf")')
+
+        result = xylo(main_file.read_text(), path=str(main_file))
+        assert result == "Hello from included!"
+
+    def test_include_with_kwargs(self, tmp_path):
+        """Test file inclusion with keyword arguments."""
+        include_file = tmp_path / "greet.sdf"
+        include_file.write_text("Hello, $(name)! You are $(age) years old.")
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$include("greet.sdf", name="Alice", age=30)')
+
+        result = xylo(main_file.read_text(), path=str(main_file))
+        assert result == "Hello, Alice! You are 30 years old."
+
+    def test_include_with_expression_args(self, tmp_path):
+        """Test file inclusion with expression arguments."""
+        include_file = tmp_path / "calc.sdf"
+        include_file.write_text("Result: $(x + y)")
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$include("calc.sdf", x=10, y=20)')
+
+        result = xylo(main_file.read_text(), path=str(main_file))
+        assert result == "Result: 30"
+
+    def test_include_inherits_context(self, tmp_path):
+        """Test that included files inherit context."""
+        include_file = tmp_path / "use_ctx.sdf"
+        include_file.write_text("Greeting: $(greeting)")
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$include("use_ctx.sdf")')
+
+        result = xylo(main_file.read_text(), context={"greeting": "Hi there"}, path=str(main_file))
+        assert result == "Greeting: Hi there"
+
+    def test_include_kwargs_override_context(self, tmp_path):
+        """Test that kwargs override existing context."""
+        include_file = tmp_path / "value.sdf"
+        include_file.write_text("Value: $(val)")
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$include("value.sdf", val=100)')
+
+        result = xylo(main_file.read_text(), context={"val": 50}, path=str(main_file))
+        assert result == "Value: 100"
+
+    def test_include_nested(self, tmp_path):
+        """Test nested includes."""
+        inner_file = tmp_path / "inner.sdf"
+        inner_file.write_text("Inner content")
+
+        outer_file = tmp_path / "outer.sdf"
+        outer_file.write_text('Outer: $include("inner.sdf")')
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('Main: $include("outer.sdf")')
+
+        result = xylo(main_file.read_text(), path=str(main_file))
+        assert result == "Main: Outer: Inner content"
+
+    def test_include_without_path_raises_error(self):
+        """Test that $include raises error when path is not provided."""
+        xylo_set_path(None)
+        with pytest.raises(ValueError, match="requires path parameter"):
+            xylo('$include("some.sdf")')
+
+    def test_include_file_not_found(self, tmp_path):
+        """Test that missing include file raises error."""
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$include("nonexistent.sdf")')
+
+        with pytest.raises(ValueError, match="file not found"):
+            xylo(main_file.read_text(), path=str(main_file))
+
+    def test_global_path_set_and_get(self):
+        """Test xylo_set_path and xylo_get_path functions."""
+        xylo_set_path(None)
+        assert xylo_get_path() is None
+
+        xylo_set_path("/some/path/file.sdf")
+        assert xylo_get_path() == "/some/path/file.sdf"
+
+        xylo_set_path(None)
+        assert xylo_get_path() is None
+
+    def test_include_with_global_path(self, tmp_path):
+        """Test $include works with global path set via xylo_set_path."""
+        include_file = tmp_path / "included.sdf"
+        include_file.write_text("Global path works!")
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$include("included.sdf")')
+
+        xylo_set_path(str(main_file))
+        try:
+            result = xylo(main_file.read_text())
+            assert result == "Global path works!"
+        finally:
+            xylo_set_path(None)
+
+    def test_local_path_overrides_global(self, tmp_path):
+        """Test that explicit path parameter overrides global path."""
+        dir1 = tmp_path / "dir1"
+        dir1.mkdir()
+        dir2 = tmp_path / "dir2"
+        dir2.mkdir()
+
+        (dir1 / "file.sdf").write_text("From dir1")
+        (dir2 / "file.sdf").write_text("From dir2")
+
+        main1 = dir1 / "main.sdf"
+        main2 = dir2 / "main.sdf"
+
+        xylo_set_path(str(main1))
+        try:
+            result = xylo('$include("file.sdf")', path=str(main2))
+            assert result == "From dir2"
+        finally:
+            xylo_set_path(None)
+
+
+class TestImport:
+    def test_import_basic(self, tmp_path):
+        """Test basic file import."""
+        import_file = tmp_path / "imported.sdf"
+        import_file.write_text("Hello from imported!")
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$import("imported.sdf")')
+
+        result = xylo(main_file.read_text(), path=str(main_file))
+        assert result == "Hello from imported!"
+
+    def test_import_does_not_inherit_context(self, tmp_path):
+        """Test that imported files do NOT inherit context (unlike include)."""
+        import_file = tmp_path / "use_ctx.sdf"
+        import_file.write_text("Value: $if('val' in dir()) $(val) $else undefined $end")
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$import("use_ctx.sdf")')
+
+        result = xylo(main_file.read_text(), context={"val": 42}, path=str(main_file))
+        assert "undefined" in result
+
+    def test_import_with_kwargs(self, tmp_path):
+        """Test that import passes only explicit kwargs."""
+        import_file = tmp_path / "greet.sdf"
+        import_file.write_text("Hello, $(name)!")
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$import("greet.sdf", name="Bob")')
+
+        result = xylo(main_file.read_text(), path=str(main_file))
+        assert result == "Hello, Bob!"
+
+    def test_import_vs_include_context_difference(self, tmp_path):
+        """Test the difference between import and include regarding context."""
+        shared_file = tmp_path / "shared.sdf"
+        shared_file.write_text("$if('x' in dir()) x=$(x) $else no-x $end")
+
+        main_file = tmp_path / "main.sdf"
+
+        # Include inherits context
+        main_file.write_text('$include("shared.sdf")')
+        include_result = xylo(main_file.read_text(), context={"x": 10}, path=str(main_file))
+        assert "x=10" in include_result
+
+        # Import does NOT inherit context
+        main_file.write_text('$import("shared.sdf")')
+        import_result = xylo(main_file.read_text(), context={"x": 10}, path=str(main_file))
+        assert "no-x" in import_result
+
+    def test_import_with_global_path(self, tmp_path):
+        """Test $import works with global path set via xylo_set_path."""
+        import_file = tmp_path / "imported.sdf"
+        import_file.write_text("Global import works!")
+
+        main_file = tmp_path / "main.sdf"
+        main_file.write_text('$import("imported.sdf")')
+
+        xylo_set_path(str(main_file))
+        try:
+            result = xylo(main_file.read_text())
+            assert result == "Global import works!"
+        finally:
+            xylo_set_path(None)
+
+    def test_import_without_path_raises_error(self):
+        """Test that $import raises error when path is not provided."""
+        xylo_set_path(None)
+        with pytest.raises(ValueError, match="requires path parameter"):
+            xylo('$import("some.sdf")')
