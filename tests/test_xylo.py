@@ -1,6 +1,9 @@
 """Tests for the xylo template engine."""
 import pytest
-from xylo import xylo, xylo_set_path, xylo_get_path, UserRaisedException
+import os
+import tempfile
+import traceback
+from xylo import xylo, xylo_set_path, xylo_get_path, UserRaisedException, XyloError
 
 
 class TestBasicExpressions:
@@ -11,7 +14,7 @@ class TestBasicExpressions:
         assert xylo("$(2 + 5)") == "7"
 
     def test_string_expression(self):
-        assert xylo('$("hello")') == "hello"
+        assert xylo("$(\"hello\")") == "hello"
 
 
 class TestExec:
@@ -45,10 +48,10 @@ class TestLoops:
         assert xylo("$for(x in range(3)) $(x) $end") == " 0  1  2 "
 
     def test_for_tuple_unpacking(self):
-        assert xylo("$for((i, val) in enumerate(['a', 'b', 'c'])) $(i): $(val) $end") == " 0: a  1: b  2: c "
+        assert xylo("$for((i, val) in enumerate([\"a\", \"b\", \"c\"])) $(i): $(val) $end") == " 0: a  1: b  2: c "
 
     def test_for_zip(self):
-        assert xylo("$for((a, b) in zip([1, 2, 3], ['x', 'y', 'z'])) $(a)-$(b) $end") == " 1-x  2-y  3-z "
+        assert xylo("$for((a, b) in zip([1, 2, 3], [\"x\", \"y\", \"z\"])) $(a)-$(b) $end") == " 1-x  2-y  3-z "
 
     def test_for_nested_unpacking(self):
         assert xylo("$for((i, (x, y)) in enumerate([(1, 2), (3, 4)])) $(i): $(x),$(y) $end") == " 0: 1,2  1: 3,4 "
@@ -57,7 +60,7 @@ class TestLoops:
 class TestExceptions:
     def test_raise(self):
         with pytest.raises(UserRaisedException, match="Test error!"):
-            xylo("$raise('Test error!')")
+            xylo("$raise(\"Test error!\")")
 
     def test_try_catch(self):
         result = xylo("$try $(1 / 0) $catch(e) Caught error: $(e) $end")
@@ -75,7 +78,7 @@ class TestAssert:
 
     def test_assert_custom_message(self):
         with pytest.raises(AssertionError, match="Custom message"):
-            xylo('$assert(1 == 2, "Custom message")')
+            xylo("$assert(1 == 2, \"Custom message\")")
 
 
 class TestSwitch:
@@ -87,19 +90,19 @@ class TestSwitch:
         assert xylo("$exec(x = 5) $switch(x) $case(1) One $case(2) Two $default Unknown $end") == "  Unknown "
 
     def test_switch_string(self):
-        assert xylo('$switch("hello") $case("hi") Hi $case("hello") Hello $end') == " Hello "
+        assert xylo("$switch(\"hello\") $case(\"hi\") Hi $case(\"hello\") Hello $end") == " Hello "
 
 
 class TestFunctions:
     def test_simple_function(self):
-        assert xylo('$function(greet, name) Hello, $(name)! $end $call(greet, "World")') == "  Hello, World! "
+        assert xylo("$function(greet, name) Hello, $(name)! $end $call(greet, \"World\")") == "  Hello, World! "
 
     def test_function_with_expression(self):
         assert xylo("$function(add, a, b) $(a + b) $end Result: $call(add, 3, 5)") == " Result:  8 "
 
     def test_function_with_loop(self):
         assert xylo(
-            '$function(repeat, text, count) $for(i in range(count)) $(text) $end $end $call(repeat, "hi", 3)') == "   hi  hi  hi  "
+            "$function(repeat, text, count) $for(i in range(count)) $(text) $end $end $call(repeat, \"hi\", 3)") == "   hi  hi  hi  "
 
     def test_function_early_return(self):
         assert xylo("$function(early, x) $if(x > 5) Big $return $end Small $end $call(early, 10)") == "   Big "
@@ -116,7 +119,7 @@ class TestContext:
 
 class TestComplexCases:
     def test_nested_loops(self):
-        result = xylo('hi $(2 + 5) $for(x in range(3)) $for(y in range(3)) hi $(x),$(y) $end $end $("hi)))\\"")')
+        result = xylo("hi $(2 + 5) $for(x in range(3)) $for(y in range(3)) hi $(x),$(y) $end $end $(\"hi)))\\\"\")")
         expected = "hi 7   hi 0,0  hi 0,1  hi 0,2    hi 1,0  hi 1,1  hi 1,2    hi 2,0  hi 2,1  hi 2,2   hi)))\""
         assert result == expected
 
@@ -133,7 +136,7 @@ class TestInclude:
         include_file.write_text("Hello from included!")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$include("included.sdf")')
+        main_file.write_text("$include(\"included.sdf\")")
 
         result = xylo(main_file.read_text(), path=str(main_file))
         assert result == "Hello from included!"
@@ -144,7 +147,7 @@ class TestInclude:
         include_file.write_text("Hello, $(name)! You are $(age) years old.")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$include("greet.sdf", name="Alice", age=30)')
+        main_file.write_text("$include(\"greet.sdf\", name=\"Alice\", age=30)")
 
         result = xylo(main_file.read_text(), path=str(main_file))
         assert result == "Hello, Alice! You are 30 years old."
@@ -155,7 +158,7 @@ class TestInclude:
         include_file.write_text("Result: $(x + y)")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$include("calc.sdf", x=10, y=20)')
+        main_file.write_text("$include(\"calc.sdf\", x=10, y=20)")
 
         result = xylo(main_file.read_text(), path=str(main_file))
         assert result == "Result: 30"
@@ -166,7 +169,7 @@ class TestInclude:
         include_file.write_text("Greeting: $(greeting)")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$include("use_ctx.sdf")')
+        main_file.write_text("$include(\"use_ctx.sdf\")")
 
         result = xylo(main_file.read_text(), context={"greeting": "Hi there"}, path=str(main_file))
         assert result == "Greeting: Hi there"
@@ -177,7 +180,7 @@ class TestInclude:
         include_file.write_text("Value: $(val)")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$include("value.sdf", val=100)')
+        main_file.write_text("$include(\"value.sdf\", val=100)")
 
         result = xylo(main_file.read_text(), context={"val": 50}, path=str(main_file))
         assert result == "Value: 100"
@@ -188,10 +191,10 @@ class TestInclude:
         inner_file.write_text("Inner content")
 
         outer_file = tmp_path / "outer.sdf"
-        outer_file.write_text('Outer: $include("inner.sdf")')
+        outer_file.write_text("Outer: $include(\"inner.sdf\")")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('Main: $include("outer.sdf")')
+        main_file.write_text("Main: $include(\"outer.sdf\")")
 
         result = xylo(main_file.read_text(), path=str(main_file))
         assert result == "Main: Outer: Inner content"
@@ -200,12 +203,12 @@ class TestInclude:
         """Test that $include raises error when path is not provided."""
         xylo_set_path(None)
         with pytest.raises(ValueError, match="requires path parameter"):
-            xylo('$include("some.sdf")')
+            xylo("$include(\"some.sdf\")")
 
     def test_include_file_not_found(self, tmp_path):
         """Test that missing include file raises error."""
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$include("nonexistent.sdf")')
+        main_file.write_text("$include(\"nonexistent.sdf\")")
 
         with pytest.raises(ValueError, match="file not found"):
             xylo(main_file.read_text(), path=str(main_file))
@@ -227,7 +230,7 @@ class TestInclude:
         include_file.write_text("Global path works!")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$include("included.sdf")')
+        main_file.write_text("$include(\"included.sdf\")")
 
         xylo_set_path(str(main_file))
         try:
@@ -251,7 +254,7 @@ class TestInclude:
 
         xylo_set_path(str(main1))
         try:
-            result = xylo('$include("file.sdf")', path=str(main2))
+            result = xylo("$include(\"file.sdf\")", path=str(main2))
             assert result == "From dir2"
         finally:
             xylo_set_path(None)
@@ -264,7 +267,7 @@ class TestImport:
         import_file.write_text("Hello from imported!")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$import("imported.sdf")')
+        main_file.write_text("$import(\"imported.sdf\")")
 
         result = xylo(main_file.read_text(), path=str(main_file))
         assert result == "Hello from imported!"
@@ -272,10 +275,10 @@ class TestImport:
     def test_import_does_not_inherit_context(self, tmp_path):
         """Test that imported files do NOT inherit context (unlike include)."""
         import_file = tmp_path / "use_ctx.sdf"
-        import_file.write_text("Value: $if('val' in dir()) $(val) $else undefined $end")
+        import_file.write_text("Value: $if(\"val\" in dir()) $(val) $else undefined $end")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$import("use_ctx.sdf")')
+        main_file.write_text("$import(\"use_ctx.sdf\")")
 
         result = xylo(main_file.read_text(), context={"val": 42}, path=str(main_file))
         assert "undefined" in result
@@ -286,7 +289,7 @@ class TestImport:
         import_file.write_text("Hello, $(name)!")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$import("greet.sdf", name="Bob")')
+        main_file.write_text("$import(\"greet.sdf\", name=\"Bob\")")
 
         result = xylo(main_file.read_text(), path=str(main_file))
         assert result == "Hello, Bob!"
@@ -294,17 +297,15 @@ class TestImport:
     def test_import_vs_include_context_difference(self, tmp_path):
         """Test the difference between import and include regarding context."""
         shared_file = tmp_path / "shared.sdf"
-        shared_file.write_text("$if('x' in dir()) x=$(x) $else no-x $end")
+        shared_file.write_text("$if(\"x\" in dir()) x=$(x) $else no-x $end")
 
         main_file = tmp_path / "main.sdf"
 
-        # Include inherits context
-        main_file.write_text('$include("shared.sdf")')
+        main_file.write_text("$include(\"shared.sdf\")")
         include_result = xylo(main_file.read_text(), context={"x": 10}, path=str(main_file))
         assert "x=10" in include_result
 
-        # Import does NOT inherit context
-        main_file.write_text('$import("shared.sdf")')
+        main_file.write_text("$import(\"shared.sdf\")")
         import_result = xylo(main_file.read_text(), context={"x": 10}, path=str(main_file))
         assert "no-x" in import_result
 
@@ -314,7 +315,7 @@ class TestImport:
         import_file.write_text("Global import works!")
 
         main_file = tmp_path / "main.sdf"
-        main_file.write_text('$import("imported.sdf")')
+        main_file.write_text("$import(\"imported.sdf\")")
 
         xylo_set_path(str(main_file))
         try:
@@ -327,4 +328,135 @@ class TestImport:
         """Test that $import raises error when path is not provided."""
         xylo_set_path(None)
         with pytest.raises(ValueError, match="requires path parameter"):
-            xylo('$import("some.sdf")')
+            xylo("$import(\"some.sdf\")")
+
+
+class TestErrorMessages:
+    """Tests for error messages with line numbers and context."""
+
+    def test_error_shows_line_number(self):
+        """Test that errors show the correct line number."""
+        template = """Line 1
+Line 2
+$if(undefined_var) test $end
+Line 4"""
+        with pytest.raises(XyloError) as exc_info:
+            xylo(template)
+
+        error_str = str(exc_info.value)
+        assert "line 3" in error_str.lower()
+        assert "$if(undefined_var)" in error_str
+
+    def test_error_shows_template_path(self):
+        """Test that errors show the file path when provided."""
+        with pytest.raises(XyloError) as exc_info:
+            xylo("$(bad_var)", path="/my/template.xylo")
+
+        error_str = str(exc_info.value)
+        assert "/my/template.xylo" in error_str
+        assert "line 1" in error_str.lower()
+
+    def test_error_shows_template_placeholder_when_no_path(self):
+        """Test that errors show <template> when no path is provided."""
+        with pytest.raises(XyloError) as exc_info:
+            xylo("$(undefined)")
+
+        error_str = str(exc_info.value)
+        assert "<template>" in error_str
+
+    def test_unmatched_statement_shows_line(self):
+        """Test that unmatched statement errors show the line content."""
+        with pytest.raises(XyloError) as exc_info:
+            xylo("$if(True) no end here")
+
+        error_str = str(exc_info.value)
+        assert "$if(True) no end here" in error_str
+        assert "Unmatched" in error_str
+
+    def test_nested_include_error_shows_correct_file(self, tmp_path):
+        """Test that errors in included files show the correct file path."""
+        child = tmp_path / "child.xylo"
+        child.write_text("""Child line 1
+Child line 2
+$(this_var_does_not_exist)
+Child line 4""")
+
+        parent = tmp_path / "parent.xylo"
+        parent.write_text("""Parent line 1
+$include("child.xylo")
+Parent line 3""")
+
+        with pytest.raises(XyloError) as exc_info:
+            xylo(parent.read_text(), path=str(parent))
+
+        error_str = str(exc_info.value)
+        assert "child.xylo" in error_str
+        assert "line 3" in error_str.lower()
+        assert "this_var_does_not_exist" in error_str
+
+    def test_deeply_nested_include_error(self, tmp_path):
+        """Test error reporting with multiple levels of includes."""
+        grandchild = tmp_path / "grandchild.xylo"
+        grandchild.write_text("""Grandchild
+$for(x in undefined_iterable) $(x) $end""")
+
+        child = tmp_path / "child.xylo"
+        child.write_text("""Child start
+$include("grandchild.xylo")
+Child end""")
+
+        parent = tmp_path / "parent.xylo"
+        parent.write_text("""Parent start
+$include("child.xylo")
+Parent end""")
+
+        with pytest.raises(XyloError) as exc_info:
+            xylo(parent.read_text(), path=str(parent))
+
+        error_str = str(exc_info.value)
+        assert "grandchild.xylo" in error_str
+        assert "undefined_iterable" in error_str
+
+    def test_error_in_multiline_preserves_context(self):
+        """Test that multiline templates show correct line context."""
+        template = """$exec(x = 1)
+$exec(y = 2)
+$exec(z = 3)
+$if(x > 0)
+  $if(y > 0)
+    $if(z > 0)
+      $(nonexistent_variable)
+    $end
+  $end
+$end"""
+        with pytest.raises(XyloError) as exc_info:
+            xylo(template)
+
+        error_str = str(exc_info.value)
+        assert "nonexistent_variable" in error_str
+
+    def test_xylo_error_is_value_error(self):
+        """Test that XyloError is a subclass of ValueError for backward compatibility."""
+        with pytest.raises(ValueError):
+            xylo("$(undefined)")
+
+    def test_error_attributes(self):
+        """Test that XyloError has useful attributes."""
+        try:
+            xylo("$(bad)", path="/test/file.xylo")
+        except XyloError as e:
+            assert e.path == "/test/file.xylo"
+            assert e.line_number == 1
+            assert "$(bad)" in e.line_content
+            assert "bad" in e.original_message
+
+    def test_traceback_format(self):
+        """Test that the traceback includes file/line info in expected format."""
+        try:
+            xylo("""line 1
+line 2
+$(undefined_here)""", path="/some/template.xylo")
+        except XyloError:
+            tb = traceback.format_exc()
+            assert "/some/template.xylo" in tb
+            assert "undefined_here" in tb

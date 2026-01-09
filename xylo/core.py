@@ -2,6 +2,52 @@ import re
 import os
 
 DEFAULT_MAX_ITERATIONS = 1000
+ERROR_CONTEXT_MAX_LENGTH = 80
+
+
+def _get_line_info(text, pos):
+    if pos < 0 or pos > len(text):
+        return 1, 0, ""
+
+    line_start = text.rfind('\n', 0, pos) + 1
+    line_end = text.find('\n', pos)
+    if line_end == -1:
+        line_end = len(text)
+
+    line_number = text.count('\n', 0, pos) + 1
+    column = pos - line_start
+    line_content = text[line_start:line_end]
+
+    return line_number, column, line_content
+
+
+class XyloError(ValueError):
+    def __init__(self, message, text=None, pos=None, path=None):
+        self.original_message = message
+        self.text = text
+        self.pos = pos
+        self.path = path
+        self.line_number = None
+        self.line_content = None
+
+        if text is not None and pos is not None:
+            self.line_number, _, self.line_content = _get_line_info(text, pos)
+            if len(self.line_content) > ERROR_CONTEXT_MAX_LENGTH:
+                self.line_content = self.line_content[:ERROR_CONTEXT_MAX_LENGTH - 3] + "..."
+
+        super().__init__(message)
+
+    def __str__(self):
+        if self.line_number is not None and self.line_content is not None:
+            file_path = self.path if self.path else "<template>"
+            location = f'\n  File "{file_path}", line {self.line_number}\n    {self.line_content}\n'
+            return location + self.original_message
+        return self.original_message
+
+
+def _raise_error(text, pos, message, path=None):
+    raise XyloError(message, text, pos, path) from None
+
 
 KEYWORD_FOR = "for"
 KEYWORD_WHILE = "while"
@@ -38,11 +84,13 @@ END_BLOCKS = [
 ]
 
 
-def _xylo_eval(path, code, context, expr=True):
+def _xylo_eval(path, code, context, expr=True, text=None, pos=None):
     try:
         return (eval if expr else exec)(code, xml_globals, {**context, "__file__": path} if path else context)
     except Exception as e:
-        raise ValueError(f"Error evaluating expression '{code}': {e}")
+        if text is not None and pos is not None:
+            raise XyloError(f"Error evaluating expression '{code}': {e}", text, pos, path) from e
+        raise
 
 
 def _find_matching_paren(text, start):
@@ -219,12 +267,12 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if raise_match:
             paren_end = _find_matching_paren(text, i + raise_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_RAISE} statement parenthesis")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_RAISE} statement parenthesis", path)
 
             code = text[i + raise_match.end():paren_end].strip()
 
             try:
-                value = _xylo_eval(path, code, context)
+                value = _xylo_eval(path, code, context, text=text, pos=i)
                 if isinstance(value, str):
                     raise UserRaisedException(value)
                 elif isinstance(value, Exception):
@@ -238,7 +286,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if assert_match:
             paren_end = _find_matching_paren(text, i + assert_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_ASSERT} statement parenthesis")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_ASSERT} statement parenthesis", path)
 
             assert_content = text[i + assert_match.end():paren_end].strip()
 
@@ -272,16 +320,16 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 message_expr = None
 
             try:
-                condition_result = _xylo_eval(path, condition_expr, context)
+                condition_result = _xylo_eval(path, condition_expr, context, text=text, pos=i)
             except Exception as e:
-                raise ValueError(f"Error evaluating ${KEYWORD_ASSERT} condition '{condition_expr}': {e}")
+                raise
 
             if not condition_result:
                 if message_expr:
                     try:
-                        message = _xylo_eval(path, message_expr, context)
+                        message = _xylo_eval(path, message_expr, context, text=text, pos=i)
                     except Exception as e:
-                        raise ValueError(f"Error evaluating ${KEYWORD_ASSERT} message '{message_expr}': {e}")
+                        raise
                     raise AssertionError(str(message))
                 else:
                     raise AssertionError(f"Assertion failed: {condition_expr}")
@@ -293,7 +341,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if try_match:
             end_pos = _find_matching_end(text, i + try_match.end())
             if end_pos == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_TRY} statement")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_TRY} statement", path)
 
             catch_pos = _find_catch_block(text, i + try_match.end(), end_pos)
 
@@ -310,7 +358,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 catch_match = re.match(r"\$" + KEYWORD_CATCH + r"\s*\(", text[catch_pos:])
                 catch_paren_end = _find_matching_paren(text, catch_pos + catch_match.end())
                 if catch_paren_end == -1:
-                    raise ValueError(f"Unmatched ${KEYWORD_CATCH} statement parenthesis")
+                    _raise_error(text, catch_pos, f"Unmatched ${KEYWORD_CATCH} statement parenthesis", path)
 
                 var_name = text[catch_pos + catch_match.end():catch_paren_end].strip()
 
@@ -337,7 +385,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if function_match:
             paren_end = _find_matching_paren(text, i + function_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_FUNCTION} statement parenthesis")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_FUNCTION} statement parenthesis", path)
 
             func_signature = text[i + function_match.end():paren_end].strip()
 
@@ -376,14 +424,14 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 parts.append(current.strip())
 
             if len(parts) < 1:
-                raise ValueError(f"Invalid ${KEYWORD_FUNCTION} syntax: expected at least function name")
+                _raise_error(text, i, f"Invalid ${KEYWORD_FUNCTION} syntax: expected at least function name", path)
 
             func_name = parts[0]
             func_params = parts[1:] if len(parts) > 1 else []
 
             end_pos = _find_matching_end(text, paren_end + 1)
             if end_pos == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_FUNCTION} statement")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_FUNCTION} statement", path)
 
             func_body = text[paren_end + 1:end_pos]
 
@@ -401,7 +449,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if call_match:
             paren_end = _find_matching_paren(text, i + call_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_CALL} statement parenthesis")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_CALL} statement parenthesis", path)
 
             call_content = text[i + call_match.end():paren_end].strip()
 
@@ -440,28 +488,29 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                 parts.append(current.strip())
 
             if len(parts) < 1:
-                raise ValueError(f"Invalid ${KEYWORD_CALL} syntax: expected at least function name")
+                _raise_error(text, i, f"Invalid ${KEYWORD_CALL} syntax: expected at least function name", path)
 
             func_name = parts[0]
             arg_exprs = parts[1:] if len(parts) > 1 else []
 
             if "__functions__" not in context or func_name not in context["__functions__"]:
-                raise ValueError(f"Undefined function: {func_name}")
+                _raise_error(text, i, f"Undefined function: {func_name}", path)
 
             func_def = context["__functions__"][func_name]
             func_params = func_def["params"]
             func_body = func_def["body"]
 
             if len(arg_exprs) != len(func_params):
-                raise ValueError(f"Function {func_name} expects {len(func_params)} arguments, got {len(arg_exprs)}")
+                _raise_error(text, i,
+                             f"Function {func_name} expects {len(func_params)} arguments, got {len(arg_exprs)}", path)
 
             call_context = context.copy()
             for param, arg_expr in zip(func_params, arg_exprs):
                 try:
-                    arg_value = _xylo_eval(path, arg_expr, context)
+                    arg_value = _xylo_eval(path, arg_expr, context, text=text, pos=i)
                     call_context[param] = arg_value
                 except Exception as e:
-                    raise ValueError(f"Error evaluating ${KEYWORD_CALL} argument '{arg_expr}': {e}")
+                    raise
 
             body_result, body_control = xylo(func_body, call_context, path, max_iterations)
             result.append(body_result)
@@ -475,18 +524,18 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if switch_match:
             paren_end = _find_matching_paren(text, i + switch_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_SWITCH} statement parenthesis")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_SWITCH} statement parenthesis", path)
 
             switch_expr = text[i + switch_match.end():paren_end].strip()
 
             end_pos = _find_matching_end(text, paren_end + 1)
             if end_pos == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_SWITCH} statement")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_SWITCH} statement", path)
 
             try:
-                switch_value = _xylo_eval(path, switch_expr, context)
+                switch_value = _xylo_eval(path, switch_expr, context, text=text, pos=i)
             except Exception as e:
-                raise ValueError(f"Error evaluating ${KEYWORD_SWITCH} expression '{switch_expr}': {e}")
+                raise
 
             branches = _find_switch_branches(text, paren_end + 1, end_pos)
             branch_positions = [paren_end + 1] + [pos for _, pos in branches] + [end_pos]
@@ -504,9 +553,9 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                     case_expr = text[branch_pos + case_match.end():case_paren_end].strip()
 
                     try:
-                        case_value = _xylo_eval(path, case_expr, context)
+                        case_value = _xylo_eval(path, case_expr, context, text=text, pos=branch_pos)
                     except Exception as e:
-                        raise ValueError(f"Error evaluating ${KEYWORD_CASE} expression '{case_expr}': {e}")
+                        raise
 
                     if switch_value == case_value:
                         body_start = case_paren_end + 1
@@ -541,33 +590,34 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if with_match:
             paren_end = _find_matching_paren(text, i + with_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_WITH} statement parenthesis")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_WITH} statement parenthesis", path)
 
             with_content = text[i + with_match.end():paren_end].strip()
 
             as_match = re.match(r"(.+?)\s+as\s+(\w+)\s*$", with_content)
             if not as_match:
-                raise ValueError(
-                    f"Invalid ${KEYWORD_WITH} syntax: expected 'expression as variable', got '{with_content}'")
+                _raise_error(text, i,
+                             f"Invalid ${KEYWORD_WITH} syntax: expected 'expression as variable', got '{with_content}'",
+                             path)
 
             cm_expr = as_match.group(1).strip()
             var_name = as_match.group(2).strip()
 
             end_pos = _find_matching_end(text, paren_end + 1)
             if end_pos == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_WITH} statement")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_WITH} statement", path)
 
             body = text[paren_end + 1:end_pos]
 
             try:
-                cm = _xylo_eval(path, cm_expr, context)
+                cm = _xylo_eval(path, cm_expr, context, text=text, pos=i)
             except Exception as e:
-                raise ValueError(f"Error evaluating ${KEYWORD_WITH} expression '{cm_expr}': {e}")
+                raise
 
             try:
                 enter_result = cm.__enter__()
             except AttributeError:
-                raise ValueError(f"${KEYWORD_WITH} expression '{cm_expr}' is not a context manager")
+                _raise_error(text, i, f"${KEYWORD_WITH} expression '{cm_expr}' is not a context manager", path)
 
             with_context = context.copy()
             with_context[var_name] = enter_result
@@ -593,22 +643,22 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if if_match:
             paren_end = _find_matching_paren(text, i + if_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_IF} statement parenthesis")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_IF} statement parenthesis", path)
 
             condition_expr = text[i + if_match.end():paren_end].strip()
 
             end_pos = _find_matching_end(text, paren_end + 1)
             if end_pos == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_IF} statement")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_IF} statement", path)
 
             branches = _find_conditional_branches(text, paren_end + 1, end_pos)
 
             branch_positions = [paren_end + 1] + [pos for _, pos in branches] + [end_pos]
 
             try:
-                condition_met = _xylo_eval(path, condition_expr, context)
+                condition_met = _xylo_eval(path, condition_expr, context, text=text, pos=i)
             except Exception as e:
-                raise ValueError(f"Error evaluating ${KEYWORD_IF} condition '{condition_expr}': {e}")
+                raise
 
             executed = False
 
@@ -631,9 +681,9 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
                         elif_condition = text[branch_pos + elif_match.end():elif_paren_end].strip()
 
                         try:
-                            elif_result = _xylo_eval(path, elif_condition, context)
+                            elif_result = _xylo_eval(path, elif_condition, context, text=text, pos=branch_pos)
                         except Exception as e:
-                            raise ValueError(f"Error evaluating ${KEYWORD_ELIF} condition '{elif_condition}': {e}")
+                            raise
 
                         if elif_result:
                             body_start = elif_paren_end + 1
@@ -664,25 +714,25 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if while_match:
             paren_end = _find_matching_paren(text, i + while_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_WHILE} statement parenthesis")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_WHILE} statement parenthesis", path)
 
             condition_expr = text[i + while_match.end():paren_end].strip()
 
             end_pos = _find_matching_end(text, paren_end + 1)
             if end_pos == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_WHILE} statement")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_WHILE} statement", path)
 
             body = text[paren_end + 1:end_pos]
 
             iteration_count = 0
             while True:
                 if iteration_count >= max_iterations:
-                    raise ValueError(f"${KEYWORD_WHILE} loop exceeded maximum iterations ({max_iterations})")
+                    _raise_error(text, i, f"${KEYWORD_WHILE} loop exceeded maximum iterations ({max_iterations})", path)
 
                 try:
-                    condition_met = _xylo_eval(path, condition_expr, context)
+                    condition_met = _xylo_eval(path, condition_expr, context, text=text, pos=i)
                 except Exception as e:
-                    raise ValueError(f"Error evaluating ${KEYWORD_WHILE} condition '{condition_expr}': {e}")
+                    raise
 
                 if not condition_met:
                     break
@@ -702,36 +752,37 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if for_match:
             paren_end = _find_matching_paren(text, i + for_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_FOR} statement parenthesis")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_FOR} statement parenthesis", path)
 
             for_statement = text[i + for_match.end():paren_end].strip()
 
             in_match = re.match(r"(.+?)\s+in\s+(.+)", for_statement, re.DOTALL)
             if not in_match:
-                raise ValueError(f"Invalid ${KEYWORD_FOR} syntax: expected 'var in iterable', got '{for_statement}'")
+                _raise_error(text, i,
+                             f"Invalid ${KEYWORD_FOR} syntax: expected 'var in iterable', got '{for_statement}'", path)
 
             var_part = in_match.group(1).strip()
             iterable_expr = in_match.group(2).strip()
 
             end_pos = _find_matching_end(text, paren_end + 1)
             if end_pos == -1:
-                raise ValueError(f"Unmatched ${KEYWORD_FOR} statement")
+                _raise_error(text, i, f"Unmatched ${KEYWORD_FOR} statement", path)
 
             body = text[paren_end + 1:end_pos]
 
             try:
-                iterable = _xylo_eval(path, iterable_expr, context)
+                iterable = _xylo_eval(path, iterable_expr, context, text=text, pos=i)
             except Exception as e:
-                raise ValueError(f"Error evaluating ${KEYWORD_FOR} iterable '{iterable_expr}': {e}")
+                raise
 
             for value in iterable:
                 loop_context = context.copy()
                 loop_context["__value__"] = value
 
                 try:
-                    _xylo_eval(path, f"{var_part} = __value__", loop_context, expr=False)
+                    _xylo_eval(path, f"{var_part} = __value__", loop_context, expr=False, text=text, pos=i)
                 except Exception as e:
-                    raise ValueError(f"Error unpacking ${KEYWORD_FOR} variable '{var_part}': {e}")
+                    raise
 
                 body_result, body_control = xylo(body, loop_context, path, max_iterations)
                 result.append(body_result)
@@ -743,7 +794,7 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
             continue
 
         if text[i:i + len("$" + KEYWORD_END)] == "$" + KEYWORD_END:
-            raise ValueError(f"Unmatched ${KEYWORD_END} statement")
+            _raise_error(text, i, f"Unmatched ${KEYWORD_END} statement", path)
 
         include_match = re.match(r"\$(" + KEYWORD_INCLUDE + r"|" + KEYWORD_IMPORT + r")\s*\(", text[i:])
         if include_match:
@@ -752,10 +803,10 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
 
             paren_end = _find_matching_paren(text, i + include_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched ${keyword_name} statement parenthesis")
+                _raise_error(text, i, f"Unmatched ${keyword_name} statement parenthesis", path)
 
             if path is None:
-                raise ValueError(f"${keyword_name} requires path parameter to be set in xylo() call")
+                _raise_error(text, i, f"${keyword_name} requires path parameter to be set in xylo() call", path)
 
             include_args = text[i + include_match.end():paren_end]
 
@@ -764,22 +815,23 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
 
             try:
                 include_path, include_kwargs = _xylo_eval(
-                    path, f"_include_helper({include_args})", {**context, "_include_helper": _include_helper}
+                    path, f"_include_helper({include_args})", {**context, "_include_helper": _include_helper},
+                    text=text, pos=i
                 )
             except Exception as e:
-                raise ValueError(f"Error parsing ${keyword_name} arguments '{include_args}': {e}")
+                raise
 
             base_dir = os.path.dirname(os.path.abspath(path))
             resolved_path = os.path.join(base_dir, include_path)
 
             if not os.path.exists(resolved_path):
-                raise ValueError(f"${keyword_name} file not found: {resolved_path}")
+                _raise_error(text, i, f"${keyword_name} file not found: {resolved_path}", path)
 
             try:
                 with open(resolved_path, "r", encoding="utf-8") as f:
                     include_content = f.read()
             except Exception as e:
-                raise ValueError(f"Error reading ${keyword_name} file '{resolved_path}': {e}")
+                _raise_error(text, i, f"Error reading ${keyword_name} file '{resolved_path}': {e}", path)
 
             if is_import:
                 include_context = dict(include_kwargs)
@@ -800,17 +852,17 @@ def xylo(text, context=None, path=None, max_iterations=DEFAULT_MAX_ITERATIONS):
         if exec_match:
             paren_end = _find_matching_paren(text, i + exec_match.end())
             if paren_end == -1:
-                raise ValueError(f"Unmatched {exec_match.group(0)} statement parenthesis")
+                _raise_error(text, i, f"Unmatched {exec_match.group(0)} statement parenthesis", path)
             code = text[i + exec_match.end():paren_end]
             is_exec = exec_match.group(1) is not None
             try:
                 if is_exec:
-                    _xylo_eval(path, code, context, expr=False)
+                    _xylo_eval(path, code, context, expr=False, text=text, pos=i)
                 else:
-                    value = _xylo_eval(path, code, context)
+                    value = _xylo_eval(path, code, context, text=text, pos=i)
                     result.append(str(value))
             except Exception as e:
-                raise ValueError(f"Error evaluating {'code' if is_exec else 'expression'} '{code}': {e}")
+                raise
             i = paren_end + 1
             continue
 

@@ -8,10 +8,10 @@ Example usage:
 """
 
 from .core import xylo as _xylo_internal
-from .core import UserRaisedException, DEFAULT_MAX_ITERATIONS
+from .core import UserRaisedException, XyloError, DEFAULT_MAX_ITERATIONS
 
-__version__ = "0.1.4"
-__all__ = ["xylo", "xylo_set_path", "xylo_get_path", "UserRaisedException", "DEFAULT_MAX_ITERATIONS"]
+__version__ = "0.1.5"
+__all__ = ["xylo", "xylo_set_path", "xylo_get_path", "UserRaisedException", "XyloError", "DEFAULT_MAX_ITERATIONS"]
 
 _global_path = None
 
