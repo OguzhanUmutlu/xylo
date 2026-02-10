@@ -86,7 +86,7 @@ _PATTERN_CASE = re.compile(re.escape(PREFIX_CASE) + r"\s*\(")
 _PATTERN_FUNCTION = re.compile(re.escape(PREFIX_FUNCTION) + r"\s*\(")
 _PATTERN_CALL = re.compile(re.escape(PREFIX_CALL) + r"\s*\(")
 _PATTERN_WITH = re.compile(re.escape(PREFIX_WITH) + r"\s*\(")
-_PATTERN_EXEC = re.compile(r"(" + re.escape(PREFIX_EXEC) + r"|" + r"\$" + r")?\s*\(")
+_PATTERN_EXEC = re.compile(r"(" + re.escape(PREFIX_EXEC) + r"|" + r"\$" + r")\s*\(")
 _PATTERN_INCLUDE_IMPORT = re.compile(r"(" + re.escape(PREFIX_INCLUDE) + r"|" + re.escape(PREFIX_IMPORT) + r")\s*\(")
 
 _END_BLOCK_PATTERNS = [
